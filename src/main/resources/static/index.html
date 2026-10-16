@@ -1,0 +1,121 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="/style.css">
+    <title>Smart Parking System</title>
+</head>
+<body>
+<header>
+    <h1>Smart Parking System</h1>
+    <p>Parking Allocation and Resource Management</p>
+</header>
+
+<main>
+    <section>
+        <h2>Parking Overview</h2>
+
+        <div class="parking-stats">
+            <div class="stat-card">
+                <p>Total Slots</p>
+                <span id="totalSlots">50</span>
+            </div>
+
+            <div class="stat-card">
+                <p>Available Slots</p>
+                <span id="availableSlots">35</span>
+            </div>
+
+            <div class="stat-card">
+                <p>Occupied Slots</p>
+                <span id="occupiedSlots">15</span>
+            </div>
+            <div class="stat-card">
+                <p>Reserved Slots</p>
+                <span id="reservedSlots">0</span>
+            </div>
+        </div>
+        <p class="legend"><span class="status available">AVAILABLE</span><span class="status occupied">OCCUPIED</span><span class="status reserved">RESERVED</span></p>
+    </section>
+
+    <section class="management" aria-labelledby="slotsHeading">
+        <div class="section-heading">
+            <div><h2 id="slotsHeading">Parking slots</h2><p>Manage the parking inventory stored in Oracle.</p></div>
+            <button id="addSlotButton" class="primary">Add slot</button>
+        </div>
+        <p id="notice" class="notice" role="status" aria-live="polite"></p>
+        <div class="filters">
+            <label>Status <select id="statusFilter"><option value="">All statuses</option><option>AVAILABLE</option><option>OCCUPIED</option><option>RESERVED</option></select></label>
+            <label>Floor <input id="floorFilter" type="number" min="0" placeholder="All floors"></label>
+            <button id="clearFilters">Clear filters</button>
+        </div>
+        <div id="slotGrid" class="slot-grid" aria-live="polite"></div>
+    </section>
+
+    <section class="management" aria-labelledby="registrationHeading">
+        <div class="section-heading"><div><h2 id="registrationHeading">Users and vehicles</h2><p>Register a user, then add their vehicle before requesting a slot.</p></div></div>
+        <div class="workflow-forms">
+            <form id="userForm" class="workflow-form">
+                <h3>Register user</h3>
+                <label>Full name <input id="userName" maxlength="100" required></label>
+                <label>Phone (optional) <input id="userPhone" maxlength="20"></label>
+                <button class="primary" type="submit">Save user</button>
+            </form>
+            <form id="vehicleForm" class="workflow-form">
+                <h3>Register vehicle</h3>
+                <label>Owner <select id="vehicleOwner" required></select></label>
+                <label>Registration number <input id="vehicleRegistration" maxlength="20" required placeholder="ABC-123"></label>
+                <label>Vehicle type <select id="vehicleType"><option>CAR</option><option>BIKE</option><option>EV</option></select></label>
+                <button class="primary" type="submit">Save vehicle</button>
+            </form>
+        </div>
+        <div id="vehicleList" class="record-list" aria-live="polite"></div>
+    </section>
+
+    <section class="management" aria-labelledby="requestsHeading">
+        <div class="section-heading"><div><h2 id="requestsHeading">Parking requests and allocation</h2><p>Higher priority values are scheduled first; ties use arrival time and request ID.</p></div></div>
+        <div class="workflow-forms">
+            <form id="requestForm" class="workflow-form">
+                <h3>Request parking</h3>
+                <label>Vehicle <select id="requestVehicle" required></select></label>
+                <label>Priority (0–100) <input id="requestPriority" type="number" min="0" max="100" value="0"></label>
+                <button class="primary" type="submit">Submit request</button>
+            </form>
+            <div class="workflow-form">
+                <h3>Scheduling algorithms</h3>
+                <label>Algorithm <select id="algorithmSelect"><option value="FCFS">FCFS</option><option value="PRIORITY">Priority</option></select></label>
+                <button id="allocateNextButton" class="primary" type="button">Allocate next request</button>
+                <button id="runSimulation" type="button">Compare pending order</button>
+                <p id="simulationResult" class="muted" aria-live="polite">Scheduling order will appear here.</p>
+            </div>
+        </div>
+        <div id="requestList" class="record-list" aria-live="polite"></div>
+    </section>
+
+    <section class="management" aria-labelledby="sessionsHeading">
+        <h2 id="sessionsHeading">Active parking sessions</h2>
+        <div id="activeSessionList" class="record-list" aria-live="polite"></div>
+    </section>
+
+    <section class="management" aria-labelledby="historyHeading">
+        <h2 id="historyHeading">Allocation history</h2>
+        <div id="historyList" class="record-list" aria-live="polite"></div>
+    </section>
+
+    <dialog id="slotDialog">
+        <form id="slotForm">
+            <h2 id="dialogTitle">Add parking slot</h2>
+            <input id="slotId" type="hidden">
+            <label>Slot number <input id="slotNumber" maxlength="10" required placeholder="C-01"></label>
+            <label>Floor <input id="slotFloor" type="number" min="0" value="0" required></label>
+            <label>Slot type <select id="slotType"><option>CAR</option><option>BIKE</option><option>EV</option></select></label>
+            <label>Status <select id="slotStatus"><option>AVAILABLE</option><option>OCCUPIED</option><option>RESERVED</option></select></label>
+            <div class="dialog-actions"><button type="button" id="cancelDialog">Cancel</button><button class="primary" type="submit">Save slot</button></div>
+        </form>
+    </dialog>
+</main>
+<script src="/script.js"></script>
+</body>
+</html>

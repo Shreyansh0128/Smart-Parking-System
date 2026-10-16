@@ -1,0 +1,116 @@
+
+* {
+    box-sizing: border-box;
+}
+
+body {
+    margin: 0;
+    font-family: Arial, sans-serif;
+    background: #f3f6fb;
+    color: #172033;
+}
+
+header {
+    background: #14213d;
+    color: white;
+    padding: 28px 40px;
+}
+
+header h1 {
+    margin: 0 0 8px;
+    font-size: 28px;
+}
+
+header p {
+    margin: 0;
+    color: #cbd5e1;
+}
+
+main {
+    max-width: 1100px;
+    margin: 35px auto;
+    padding: 0 24px;
+}
+
+h2 {
+    margin-bottom: 20px;
+}
+
+.parking-stats {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 20px;
+}
+
+.management { margin-top: 42px; }
+.section-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.section-heading p { color: #64748b; margin-top: -12px; }
+button, select, input { font: inherit; }
+button { cursor: pointer; border: 1px solid #cbd5e1; background: white; color: #172033; border-radius: 8px; padding: 9px 13px; }
+button:hover { background: #f1f5f9; }
+button.primary { color: white; background: #2563eb; border-color: #2563eb; }
+button.primary:hover { background: #1d4ed8; }
+button.danger { color: #b91c1c; }
+.filters { display: flex; align-items: end; gap: 14px; margin: 18px 0; flex-wrap: wrap; }
+.filters label, #slotForm label { display: grid; gap: 6px; color: #475569; font-size: 14px; }
+input, select { border: 1px solid #cbd5e1; border-radius: 8px; padding: 9px; background: white; color: #172033; }
+.notice { min-height: 20px; margin: 10px 0; }
+.notice.success { color: #166534; }
+.notice.error { color: #b91c1c; }
+.slot-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 14px; }
+.slot-card { padding: 18px; border: 1px solid #e2e8f0; border-radius: 12px; background: white; box-shadow: 0 4px 14px rgba(15,23,42,.05); }
+.slot-card h3 { margin: 0 0 8px; font-size: 21px; }
+.slot-card p { color: #64748b; margin: 0 0 14px; }
+.status { display: inline-block; border-radius: 999px; padding: 5px 10px; font-size: 12px; font-weight: bold; }
+.status.available { color: #166534; background: #dcfce7; }
+.status.occupied { color: #991b1b; background: #fee2e2; }
+.status.reserved { color: #92400e; background: #fef3c7; }
+.slot-actions { display: flex; gap: 7px; margin-top: 16px; flex-wrap: wrap; }
+.slot-actions select { min-width: 115px; }
+.empty { color: #64748b; grid-column: 1 / -1; }
+.legend { display: flex; gap: 10px; flex-wrap: wrap; }
+.workflow-forms { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 16px; }
+.workflow-form { display: grid; align-content: start; gap: 12px; padding: 18px; background: white; border: 1px solid #e2e8f0; border-radius: 12px; }
+.workflow-form h3 { margin: 0; }
+.workflow-form label { display: grid; gap: 6px; color: #475569; font-size: 14px; }
+.record-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; margin-top: 16px; }
+.record-card { display: grid; align-content: start; gap: 10px; padding: 16px; background: white; border: 1px solid #e2e8f0; border-radius: 10px; overflow-wrap: anywhere; }
+.record-card p { margin: 0; color: #64748b; }
+.record-card button { justify-self: start; }
+.muted { color: #64748b; }
+dialog { width: min(440px, calc(100% - 28px)); border: 0; border-radius: 14px; padding: 24px; box-shadow: 0 20px 60px #0f172a44; }
+dialog::backdrop { background: #0f172a88; }
+#slotForm { display: grid; gap: 14px; }
+#slotForm h2 { margin: 0 0 4px; }
+.dialog-actions { display: flex; justify-content: end; gap: 10px; margin-top: 5px; }
+
+.stat-card {
+    background: white;
+    padding: 24px;
+    border-radius: 12px;
+    box-shadow: 0 4px 16px rgba(15, 23, 42, 0.07);
+    border: 1px solid #e2e8f0;
+}
+
+.stat-card p {
+    margin: 0 0 12px;
+    color: #64748b;
+}
+
+.stat-card span {
+    font-size: 32px;
+    font-weight: bold;
+}
+
+@media (max-width: 650px) {
+    .parking-stats {
+        grid-template-columns: 1fr;
+    }
+
+    .section-heading { align-items: start; }
+    .slot-actions { align-items: stretch; }
+
+    header {
+        padding: 24px;
+    }
+}
