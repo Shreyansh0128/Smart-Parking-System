@@ -5,6 +5,8 @@ import org.springframework.dao.EmptyResultDataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
 
+import java.math.BigDecimal;
+import java.sql.Date;
 import java.sql.Timestamp;
 import java.util.List;
 import java.util.Map;
@@ -104,13 +106,16 @@ public class ParkingWorkflowRepository {
     }
 
     public int occupyIfAvailable(long slotId) {
-        return jdbc.update("UPDATE PARKING_SLOTS SET STATUS='OCCUPIED' WHERE SLOT_ID=? AND STATUS='AVAILABLE'", slotId);
+        return jdbc.update("UPDATE PARKING_SLOTS SET STATUS='OCCUPIED',VERSION_NO=VERSION_NO+1 " +
+                "WHERE SLOT_ID=? AND STATUS='AVAILABLE'", slotId);
     }
 
-    public long createSession(long requestId, long vehicleId, long slotId) {
+    public long createSession(long requestId, long vehicleId, long slotId, BigDecimal hourlyRate) {
         long id = nextId(SequenceName.PARKING_SESSION_SEQ);
-        jdbc.update("INSERT INTO PARKING_SESSIONS (SESSION_ID,REQUEST_ID,VEHICLE_ID,SLOT_ID,STARTED_AT,SESSION_STATUS) VALUES (?,?,?,?,SYSTIMESTAMP,'ACTIVE')",
-                id, requestId, vehicleId, slotId);
+        jdbc.update("INSERT INTO PARKING_SESSIONS " +
+                        "(SESSION_ID,REQUEST_ID,VEHICLE_ID,SLOT_ID,STARTED_AT,SESSION_STATUS,HOURLY_RATE) " +
+                        "VALUES (?,?,?,?,SYSTIMESTAMP,'ACTIVE',?)",
+                id, requestId, vehicleId, slotId, hourlyRate);
         return id;
     }
 
@@ -120,9 +125,61 @@ public class ParkingWorkflowRepository {
                 id, requestId, slotId, outcome, details);
     }
 
+    public void recordAudit(String eventType, Long requestId, Long sessionId, Long slotId,
+                            String outcome, String details) {
+        jdbc.update("INSERT INTO PARKING_AUDIT_EVENTS " +
+                        "(EVENT_ID,EVENT_TYPE,EVENT_AT,REQUEST_ID,SESSION_ID,SLOT_ID,OUTCOME,DETAILS) " +
+                        "VALUES (PARKING_AUDIT_SEQ.NEXTVAL,?,SYSTIMESTAMP,?,?,?,?,?)",
+                eventType, requestId, sessionId, slotId, outcome, details);
+    }
+
+    public List<Map<String, Object>> auditEvents(int limit) {
+        return jdbc.queryForList("SELECT * FROM (" +
+                "SELECT EVENT_ID AS \"id\",EVENT_TYPE AS \"eventType\",EVENT_AT AS \"eventAt\"," +
+                "REQUEST_ID AS \"requestId\",SESSION_ID AS \"sessionId\",SLOT_ID AS \"slotId\"," +
+                "OUTCOME AS \"outcome\",DETAILS AS \"details\" FROM PARKING_AUDIT_EVENTS " +
+                "ORDER BY EVENT_AT DESC,EVENT_ID DESC) WHERE ROWNUM <= ?", limit);
+    }
+
+    public List<Map<String, Object>> occupancyReport(Date from, int dayCount) {
+        return jdbc.queryForList("WITH report_days AS (" +
+                        "SELECT TRUNC(?) + LEVEL - 1 AS report_day FROM dual CONNECT BY LEVEL <= ?)," +
+                        "day_cutoffs AS (SELECT report_day,CASE WHEN report_day+1>SYSDATE " +
+                        "THEN CAST(SYSTIMESTAMP AS TIMESTAMP) ELSE CAST(report_day+1 AS TIMESTAMP) END AS cutoff FROM report_days) " +
+                        "SELECT TO_CHAR(d.report_day,'YYYY-MM-DD') AS \"day\"," +
+                        "COUNT(DISTINCT s.SESSION_ID) AS \"occupiedSlots\"," +
+                        "(SELECT COUNT(*) FROM PARKING_SLOTS) AS \"totalSlots\"," +
+                        "CASE WHEN (SELECT COUNT(*) FROM PARKING_SLOTS)=0 THEN 0 ELSE " +
+                        "ROUND(100*COUNT(DISTINCT s.SESSION_ID)/(SELECT COUNT(*) FROM PARKING_SLOTS),2) END " +
+                        "AS \"utilizationPercent\" FROM day_cutoffs d LEFT JOIN PARKING_SESSIONS s " +
+                        "ON s.STARTED_AT<d.cutoff AND (s.ENDED_AT IS NULL OR s.ENDED_AT>d.cutoff) " +
+                        "GROUP BY d.report_day ORDER BY d.report_day",
+                from, dayCount);
+    }
+
+    public List<Map<String, Object>> revenueReport(Date from, Date toExclusive) {
+        return jdbc.queryForList("SELECT TO_CHAR(TRUNC(ENDED_AT),'YYYY-MM-DD') AS \"day\"," +
+                        "COUNT(*) AS \"closedSessions\",ROUND(SUM(NVL(BILLED_FEE,CASE WHEN ENDED_AT=STARTED_AT THEN 0 ELSE " +
+                        "CEIL((EXTRACT(DAY FROM (ENDED_AT-STARTED_AT))*86400+" +
+                        "EXTRACT(HOUR FROM (ENDED_AT-STARTED_AT))*3600+" +
+                        "EXTRACT(MINUTE FROM (ENDED_AT-STARTED_AT))*60+" +
+                        "EXTRACT(SECOND FROM (ENDED_AT-STARTED_AT)))/3600)*HOURLY_RATE END)),2) AS \"revenue\" " +
+                        "FROM PARKING_SESSIONS WHERE SESSION_STATUS='CLOSED' AND ENDED_AT>=? AND ENDED_AT<? " +
+                        "GROUP BY TRUNC(ENDED_AT) ORDER BY TRUNC(ENDED_AT)",
+                from, toExclusive);
+    }
+
+    public List<Map<String, Object>> allocationOutcomeReport(Date from, Date toExclusive) {
+        return jdbc.queryForList("SELECT TO_CHAR(TRUNC(ALLOCATED_AT),'YYYY-MM-DD') AS \"day\"," +
+                        "OUTCOME AS \"outcome\",COUNT(*) AS \"count\" FROM ALLOCATION_HISTORY " +
+                        "WHERE ALLOCATED_AT>=? AND ALLOCATED_AT<? GROUP BY TRUNC(ALLOCATED_AT),OUTCOME " +
+                        "ORDER BY TRUNC(ALLOCATED_AT),OUTCOME",
+                from, toExclusive);
+    }
+
     public Map<String, Object> activeSession(long sessionId) {
         try {
-            return jdbc.queryForMap("SELECT SESSION_ID AS \"id\",REQUEST_ID AS \"requestId\",VEHICLE_ID AS \"vehicleId\",SLOT_ID AS \"slotId\",STARTED_AT AS \"startedAt\" FROM PARKING_SESSIONS WHERE SESSION_ID=? AND SESSION_STATUS='ACTIVE' FOR UPDATE",
+            return jdbc.queryForMap("SELECT SESSION_ID AS \"id\",REQUEST_ID AS \"requestId\",VEHICLE_ID AS \"vehicleId\",SLOT_ID AS \"slotId\",STARTED_AT AS \"startedAt\",HOURLY_RATE AS \"hourlyRate\" FROM PARKING_SESSIONS WHERE SESSION_ID=? AND SESSION_STATUS='ACTIVE' FOR UPDATE",
                     sessionId);
         } catch (EmptyResultDataAccessException exception) {
             return null;
@@ -134,17 +191,23 @@ public class ParkingWorkflowRepository {
                 sessionId);
     }
 
+    public int saveSessionFee(long sessionId, BigDecimal fee) {
+        return jdbc.update("UPDATE PARKING_SESSIONS SET BILLED_FEE=? WHERE SESSION_ID=? AND SESSION_STATUS='CLOSED' AND BILLED_FEE IS NULL",
+                fee, sessionId);
+    }
+
     public int releaseSlot(long slotId) {
-        return jdbc.update("UPDATE PARKING_SLOTS SET STATUS='AVAILABLE' WHERE SLOT_ID=? AND STATUS='OCCUPIED'", slotId);
+        return jdbc.update("UPDATE PARKING_SLOTS SET STATUS='AVAILABLE',VERSION_NO=VERSION_NO+1 " +
+                "WHERE SLOT_ID=? AND STATUS='OCCUPIED'", slotId);
     }
 
     public List<Map<String, Object>> activeSessions() {
-        return jdbc.queryForList("SELECT S.SESSION_ID AS \"id\",S.REQUEST_ID AS \"requestId\",S.VEHICLE_ID AS \"vehicleId\",S.SLOT_ID AS \"slotId\",S.STARTED_AT AS \"startedAt\",V.REGISTRATION_NUMBER AS \"registrationNumber\",V.VEHICLE_TYPE AS \"vehicleType\",P.SLOT_NUMBER AS \"slotNumber\",P.FLOOR AS \"floor\" FROM PARKING_SESSIONS S JOIN VEHICLES V ON V.VEHICLE_ID=S.VEHICLE_ID JOIN PARKING_SLOTS P ON P.SLOT_ID=S.SLOT_ID WHERE S.SESSION_STATUS='ACTIVE' ORDER BY S.STARTED_AT,S.SESSION_ID");
+        return jdbc.queryForList("SELECT S.SESSION_ID AS \"id\",S.REQUEST_ID AS \"requestId\",S.VEHICLE_ID AS \"vehicleId\",S.SLOT_ID AS \"slotId\",S.STARTED_AT AS \"startedAt\",S.HOURLY_RATE AS \"hourlyRate\",V.REGISTRATION_NUMBER AS \"registrationNumber\",V.VEHICLE_TYPE AS \"vehicleType\",P.SLOT_NUMBER AS \"slotNumber\",P.FLOOR AS \"floor\" FROM PARKING_SESSIONS S JOIN VEHICLES V ON V.VEHICLE_ID=S.VEHICLE_ID JOIN PARKING_SLOTS P ON P.SLOT_ID=S.SLOT_ID WHERE S.SESSION_STATUS='ACTIVE' ORDER BY S.STARTED_AT,S.SESSION_ID");
     }
 
     public Map<String, Object> session(long sessionId) {
         try {
-            return jdbc.queryForMap("SELECT S.SESSION_ID AS \"id\",S.REQUEST_ID AS \"requestId\",S.VEHICLE_ID AS \"vehicleId\",S.SLOT_ID AS \"slotId\",S.STARTED_AT AS \"startedAt\",S.ENDED_AT AS \"endedAt\",S.SESSION_STATUS AS \"status\",V.REGISTRATION_NUMBER AS \"registrationNumber\",V.VEHICLE_TYPE AS \"vehicleType\",P.SLOT_NUMBER AS \"slotNumber\",P.FLOOR AS \"floor\" FROM PARKING_SESSIONS S JOIN VEHICLES V ON V.VEHICLE_ID=S.VEHICLE_ID JOIN PARKING_SLOTS P ON P.SLOT_ID=S.SLOT_ID WHERE S.SESSION_ID=?",
+            return jdbc.queryForMap("SELECT S.SESSION_ID AS \"id\",S.REQUEST_ID AS \"requestId\",S.VEHICLE_ID AS \"vehicleId\",S.SLOT_ID AS \"slotId\",S.STARTED_AT AS \"startedAt\",S.ENDED_AT AS \"endedAt\",S.SESSION_STATUS AS \"status\",S.HOURLY_RATE AS \"hourlyRate\",S.BILLED_FEE AS \"billedFee\",V.REGISTRATION_NUMBER AS \"registrationNumber\",V.VEHICLE_TYPE AS \"vehicleType\",P.SLOT_NUMBER AS \"slotNumber\",P.FLOOR AS \"floor\" FROM PARKING_SESSIONS S JOIN VEHICLES V ON V.VEHICLE_ID=S.VEHICLE_ID JOIN PARKING_SLOTS P ON P.SLOT_ID=S.SLOT_ID WHERE S.SESSION_ID=?",
                     sessionId);
         } catch (EmptyResultDataAccessException exception) {
             return null;

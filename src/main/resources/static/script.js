@@ -42,14 +42,24 @@ function renderSlots(slots) {
         const statusSelect = document.createElement("select"); statusSelect.setAttribute("aria-label", `Change status for ${slot.slotNumber}`);
         ["AVAILABLE", "OCCUPIED", "RESERVED"].forEach(value => { const option = document.createElement("option"); option.value = value; option.textContent = value; option.selected = value === slot.status; statusSelect.append(option); });
         statusSelect.addEventListener("change", async () => {
-            try { await api(`/api/parking/slots/${slot.id}/status`, { method: "PATCH", body: JSON.stringify({ status: statusSelect.value }) }); showNotice(`${slot.slotNumber} status updated.`); await loadDashboard(); }
+            try {
+                await api(`/api/parking/slots/${slot.id}/status`, {
+                    method: "PATCH", body: JSON.stringify({ status: statusSelect.value, version: slot.version })
+                });
+                showNotice(`${slot.slotNumber} status updated.`);
+                await Promise.all([loadDashboard(), loadWorkflow()]);
+            }
             catch (error) { showNotice(error.message, "error"); await loadDashboard(); }
         });
         const edit = document.createElement("button"); edit.textContent = "Edit"; edit.addEventListener("click", () => openEdit(slot));
         const remove = document.createElement("button"); remove.textContent = "Delete"; remove.className = "danger";
         remove.addEventListener("click", async () => {
             if (!window.confirm(`Delete slot ${slot.slotNumber}?`)) return;
-            try { await api(`/api/parking/slots/${slot.id}`, { method: "DELETE" }); showNotice(`${slot.slotNumber} deleted.`); await loadDashboard(); }
+            try {
+                await api(`/api/parking/slots/${slot.id}`, { method: "DELETE" });
+                showNotice(`${slot.slotNumber} deleted.`);
+                await Promise.all([loadDashboard(), loadWorkflow()]);
+            }
             catch (error) { showNotice(error.message, "error"); }
         });
         controls.append(statusSelect, edit, remove); card.append(title, meta, status, controls); grid.append(card);
@@ -98,10 +108,13 @@ async function loadWorkflow() {
     $("requestList").textContent = "Loading requests…";
     $("activeSessionList").textContent = "Loading active sessions…";
     $("historyList").textContent = "Loading history…";
-    const [users, vehicles, requests, sessions, history, simulation] = await Promise.all([
+    $("auditList").textContent = "Loading audit events…";
+    $("reportList").textContent = "Loading reports…";
+    const [users, vehicles, requests, sessions, history, simulation, audit, reports] = await Promise.all([
         api("/api/parking/users"), api("/api/parking/vehicles"), api("/api/parking/requests"),
         api("/api/parking/sessions/active"), api("/api/parking/history"),
-        api("/api/parking/requests/scheduling/simulate")
+        api("/api/parking/requests/scheduling/simulate"), api("/api/parking/audit?limit=30"),
+        api("/api/parking/reports")
     ]);
 
     populateSelect($("vehicleOwner"), users, "id", (user) => `${user.fullName} (#${user.id})`);
@@ -133,8 +146,26 @@ async function loadWorkflow() {
     renderWorkflowRecords($("historyList"), history,
         (entry) => `${entry.outcome} · ${entry.registrationNumber || `Request ${entry.requestId}`}`,
         (entry) => `${entry.slotNumber || "No slot"} · ${entry.allocatedAt ? new Date(entry.allocatedAt).toLocaleString() : ""}${entry.endedAt ? ` · Ended ${new Date(entry.endedAt).toLocaleString()}` : ""}`);
+    renderWorkflowRecords($("auditList"), audit,
+        (event) => `${event.eventType} · ${event.outcome}`,
+        (event) => `${new Date(event.eventAt).toLocaleString()} · ${event.details || ""}`);
+    const reportRows = [
+        ...reports.occupancy.map((row) => ({
+            title: `Occupancy · ${row.day}`,
+            details: `${row.occupiedSlots}/${row.totalSlots} slots · ${row.utilizationPercent}%`
+        })),
+        ...reports.revenue.map((row) => ({
+            title: `Revenue · ${row.day}`,
+            details: `${row.closedSessions} closed sessions · ${row.revenue}`
+        })),
+        ...reports.allocationOutcomes.map((row) => ({
+            title: `Allocation · ${row.day} · ${row.outcome}`,
+            details: `${row.count} attempt(s)`
+        }))
+    ];
+    renderWorkflowRecords($("reportList"), reportRows, (row) => row.title, (row) => row.details);
     $("simulationResult").textContent =
-        `FCFS: ${simulation.fcfs.join(", ") || "none"} | Priority: ${simulation.priority.join(", ") || "none"}`;
+        `FCFS: ${simulation.fcfs.join(", ") || "none"} | Priority: ${simulation.priority.join(", ") || "none"} | Aging: ${simulation.priorityAging.join(", ") || "none"}`;
 }
 
 async function allocateRequest(requestId) {
@@ -159,6 +190,7 @@ function openEdit(slot) {
     $("dialogTitle").textContent = "Edit parking slot";
     $("slotId").value = slot.id; $("slotNumber").value = slot.slotNumber;
     $("slotFloor").value = slot.floor; $("slotType").value = slot.slotType; $("slotStatus").value = slot.status;
+    dialog.dataset.version = slot.version;
     dialog.showModal();
 }
 
@@ -169,10 +201,15 @@ $("cancelDialog").addEventListener("click", () => dialog.close());
 $("slotForm").addEventListener("submit", async (event) => {
     event.preventDefault();
     const id = $("slotId").value;
-    const body = { slotNumber: $("slotNumber").value, floor: Number($("slotFloor").value), slotType: $("slotType").value, status: $("slotStatus").value };
+    const body = {
+        slotNumber: $("slotNumber").value, floor: Number($("slotFloor").value),
+        slotType: $("slotType").value, status: $("slotStatus").value,
+        version: id ? Number(dialog.dataset.version) : undefined
+    };
     try {
         await api(id ? `/api/parking/slots/${id}` : "/api/parking/slots", { method: id ? "PUT" : "POST", body: JSON.stringify(body) });
-        dialog.close(); showNotice(id ? "Slot updated." : "Slot added."); await loadDashboard();
+        dialog.close(); showNotice(id ? "Slot updated." : "Slot added.");
+        await Promise.all([loadDashboard(), loadWorkflow()]);
     } catch (error) { showNotice(error.message, "error"); }
 });
 
@@ -233,7 +270,7 @@ $("runSimulation").addEventListener("click", async () => {
     try {
         const result = await api("/api/parking/requests/scheduling/simulate");
         $("simulationResult").textContent =
-            `FCFS: ${result.fcfs.join(", ") || "none"} | Priority: ${result.priority.join(", ") || "none"}`;
+            `FCFS: ${result.fcfs.join(", ") || "none"} | Priority: ${result.priority.join(", ") || "none"} | Aging: ${result.priorityAging.join(", ") || "none"}`;
     } catch (error) { showNotice(error.message, "error"); }
 });
 

@@ -31,12 +31,39 @@ class ParkingControllerTest {
     @Test
     void fullSlotEditCannotMakeAnActivelyAllocatedSlotAvailable() {
         when(jdbc.queryForMap(contains("FOR UPDATE"), eq(7L))).thenReturn(Map.of(
-                "id", 7L, "slotNumber", "C-07", "floor", 0, "slotType", "CAR", "status", "OCCUPIED"));
+                "id", 7L, "slotNumber", "C-07", "floor", 0, "slotType", "CAR", "status", "OCCUPIED",
+                "version", 2L));
         when(jdbc.queryForObject(contains("SESSION_STATUS='ACTIVE'"), eq(Integer.class), eq(7L))).thenReturn(1);
 
         assertThrows(ResponseStatusException.class,
-                () -> controller.updateSlot(7, new ParkingController.SlotInput("C-07", 0, "CAR", "AVAILABLE")));
+                () -> controller.updateSlot(7, new ParkingController.SlotInput("C-07", 0, "CAR", "AVAILABLE", 2L)));
         verify(jdbc, never()).update(contains("UPDATE PARKING_SLOTS"), eq("C-07"), eq(0),
-                eq("CAR"), eq("AVAILABLE"), eq(7L));
+                eq("CAR"), eq("AVAILABLE"), eq(7L), eq(2L));
+    }
+
+    @Test
+    void staleSlotVersionReturnsConflictWithoutUpdating() {
+        when(jdbc.queryForMap(contains("FOR UPDATE"), eq(7L))).thenReturn(Map.of(
+                "id", 7L, "slotNumber", "C-07", "floor", 0, "slotType", "CAR", "status", "AVAILABLE",
+                "version", 3L));
+
+        ResponseStatusException exception = assertThrows(ResponseStatusException.class,
+                () -> controller.updateSlot(7, new ParkingController.SlotInput("C-07", 1, "CAR", "AVAILABLE", 2L)));
+
+        assertEquals(409, exception.getStatusCode().value());
+        verify(jdbc, never()).update(contains("UPDATE PARKING_SLOTS"), org.mockito.ArgumentMatchers.<Object[]>any());
+    }
+
+    @Test
+    void slotEditRequiresAnExpectedVersion() {
+        when(jdbc.queryForMap(contains("FOR UPDATE"), eq(7L))).thenReturn(Map.of(
+                "id", 7L, "slotNumber", "C-07", "floor", 0, "slotType", "CAR", "status", "AVAILABLE",
+                "version", 0L));
+
+        ResponseStatusException exception = assertThrows(ResponseStatusException.class,
+                () -> controller.updateSlot(7, new ParkingController.SlotInput("C-07", 1, "CAR", "AVAILABLE", null)));
+
+        assertEquals(400, exception.getStatusCode().value());
+        verify(jdbc, never()).update(contains("UPDATE PARKING_SLOTS"), org.mockito.ArgumentMatchers.<Object[]>any());
     }
 }

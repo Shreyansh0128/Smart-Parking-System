@@ -23,7 +23,7 @@ class ParkingSlotClaimConcurrencyTest {
         JdbcTemplate jdbc = mock(JdbcTemplate.class);
         AtomicBoolean slotAvailable = new AtomicBoolean(true);
         doAnswer(invocation -> slotAvailable.compareAndSet(true, false) ? 1 : 0)
-                .when(jdbc).update(eq("UPDATE PARKING_SLOTS SET STATUS='OCCUPIED' WHERE SLOT_ID=? AND STATUS='AVAILABLE'"),
+                .when(jdbc).update(eq("UPDATE PARKING_SLOTS SET STATUS='OCCUPIED',VERSION_NO=VERSION_NO+1 WHERE SLOT_ID=? AND STATUS='AVAILABLE'"),
                         any(Object[].class));
         ParkingWorkflowRepository repository = new ParkingWorkflowRepository(jdbc);
 

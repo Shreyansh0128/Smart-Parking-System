@@ -9,7 +9,9 @@ import com.smartparking.service.SchedulingAlgorithm;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.server.ResponseStatusException;
+import org.springframework.format.annotation.DateTimeFormat;
 
+import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
 
@@ -95,6 +97,18 @@ public class ParkingWorkflowController {
     @GetMapping("/history")
     public List<Map<String, Object>> history() {
         return service.history();
+    }
+
+    @GetMapping("/audit")
+    public List<Map<String, Object>> auditEvents(@RequestParam(defaultValue = "50") int limit) {
+        return service.auditEvents(limit);
+    }
+
+    @GetMapping("/reports")
+    public Map<String, Object> reports(
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to) {
+        return service.reports(from, to);
     }
 
     private SchedulingAlgorithm algorithm(AllocationInput input) {

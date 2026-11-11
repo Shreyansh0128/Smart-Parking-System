@@ -75,7 +75,9 @@
     </section>
 
     <section class="management" aria-labelledby="requestsHeading">
-        <div class="section-heading"><div><h2 id="requestsHeading">Parking requests and allocation</h2><p>Higher priority values are scheduled first; ties use arrival time and request ID.</p></div></div>
+        <div class="section-heading">
+            <div><h2 id="requestsHeading">Parking requests and allocation</h2><p>Higher priority values run first; aging adds one point per five waiting minutes up to 100. Ties use arrival time, then request ID.</p></div>
+        </div>
         <div class="workflow-forms">
             <form id="requestForm" class="workflow-form">
                 <h3>Request parking</h3>
@@ -85,7 +87,7 @@
             </form>
             <div class="workflow-form">
                 <h3>Scheduling algorithms</h3>
-                <label>Algorithm <select id="algorithmSelect"><option value="FCFS">FCFS</option><option value="PRIORITY">Priority</option></select></label>
+                <label>Algorithm <select id="algorithmSelect"><option value="FCFS">FCFS</option><option value="PRIORITY">Priority (fixed)</option><option value="PRIORITY_AGING">Priority with aging</option></select></label>
                 <button id="allocateNextButton" class="primary" type="button">Allocate next request</button>
                 <button id="runSimulation" type="button">Compare pending order</button>
                 <p id="simulationResult" class="muted" aria-live="polite">Scheduling order will appear here.</p>
@@ -102,6 +104,18 @@
     <section class="management" aria-labelledby="historyHeading">
         <h2 id="historyHeading">Allocation history</h2>
         <div id="historyList" class="record-list" aria-live="polite"></div>
+    </section>
+
+    <section class="management" aria-labelledby="auditHeading">
+        <h2 id="auditHeading">Recent audit events</h2>
+        <p>Audit entries commit or roll back with the database operation they describe.</p>
+        <div id="auditList" class="record-list" aria-live="polite"></div>
+    </section>
+
+    <section class="management" aria-labelledby="reportsHeading">
+        <h2 id="reportsHeading">Reports · last 30 days</h2>
+        <p>Occupancy is a daily end-of-day snapshot (current day uses the current time); revenue applies the configured hourly rate to closed sessions.</p>
+        <div id="reportList" class="record-list" aria-live="polite"></div>
     </section>
 
     <dialog id="slotDialog">
