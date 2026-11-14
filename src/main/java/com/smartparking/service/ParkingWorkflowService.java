@@ -13,6 +13,7 @@ import java.math.RoundingMode;
 import java.sql.Timestamp;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.time.ZoneOffset;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -24,6 +25,7 @@ import java.util.Set;
 public class ParkingWorkflowService {
     private static final Set<String> VEHICLE_TYPES = Set.of("BIKE", "CAR", "EV");
     private static final int MAX_PRIORITY = 100;
+    private static final SchedulingAlgorithm AUTOMATIC_ALGORITHM = SchedulingAlgorithm.PRIORITY_AGING;
     private final ParkingWorkflowRepository repository;
     private final ParkingRequestScheduler scheduler;
     private final BigDecimal hourlyRate;
@@ -79,15 +81,26 @@ public class ParkingWorkflowService {
 
     @Transactional
     public Map<String, Object> createRequest(Long vehicleId, Integer priority) {
+        return createRequest(vehicleId, priority, null);
+    }
+
+    @Transactional
+    public Map<String, Object> createRequest(Long vehicleId, Integer priority, Integer expectedDurationMinutes) {
         if (vehicleId == null || vehicleId <= 0) throw badRequest("A valid vehicle ID is required");
         if (repository.vehicle(vehicleId) == null) throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Vehicle not found");
         int requestPriority = priority == null ? 0 : priority;
         if (requestPriority < 0 || requestPriority > MAX_PRIORITY)
             throw badRequest("Priority must be between 0 and 100; higher values run first");
-        long requestId = repository.createRequest(vehicleId, requestPriority);
+        if (expectedDurationMinutes != null && (expectedDurationMinutes < 1 || expectedDurationMinutes > 10080))
+            throw badRequest("Expected duration must be between 1 minute and 7 days, or left blank for unknown");
+        long requestId = repository.createRequest(vehicleId, requestPriority, expectedDurationMinutes);
         repository.recordAudit("REQUEST_CREATED", requestId, null, null, "SUCCESS",
-                "vehicleId=" + vehicleId + ", priority=" + requestPriority);
-        return repository.request(requestId);
+                "vehicleId=" + vehicleId + ", priority=" + requestPriority +
+                        ", expectedDurationMinutes=" + expectedDurationMinutes);
+        List<Map<String, Object>> allocations = autoAllocatePendingRequests();
+        Map<String, Object> result = new LinkedHashMap<>(repository.request(requestId));
+        result.put("automaticAllocations", allocations);
+        return result;
     }
 
     public List<Map<String, Object>> requests() {
@@ -102,7 +115,7 @@ public class ParkingWorkflowService {
 
     public Map<String, Object> schedulingSimulation() {
         List<ParkingRequestScheduler.ScheduledRequest> pending = pendingRequests();
-        java.time.LocalDateTime now = java.time.LocalDateTime.now();
+        java.time.LocalDateTime now = java.time.LocalDateTime.now(ZoneOffset.UTC);
         Map<String, Object> result = new LinkedHashMap<>();
         List<Long> fcfs = new ArrayList<>();
         for (ParkingRequestScheduler.ScheduledRequest request :
@@ -159,16 +172,43 @@ public class ParkingWorkflowService {
         return Map.of("allocated", false, "error", "No pending request has a compatible available slot");
     }
 
+    @Transactional
+    public List<Map<String, Object>> autoAllocatePendingRequests() {
+        List<Map<String, Object>> allocations = new ArrayList<>();
+        List<ParkingRequestScheduler.ScheduledRequest> ordered =
+                scheduler.order(pendingRequests(), AUTOMATIC_ALGORITHM);
+        for (ParkingRequestScheduler.ScheduledRequest scheduled : ordered) {
+            Map<String, Object> request = repository.request(scheduled.id());
+            if (request == null || !"PENDING".equals(request.get("status"))) continue;
+            String vehicleType = String.valueOf(request.get("vehicleType"));
+            if (repository.availableSlots(vehicleType).isEmpty()) continue;
+
+            Map<String, Object> result = tryAllocate(request, AUTOMATIC_ALGORITHM, true);
+            if (Boolean.TRUE.equals(result.get("allocated"))) allocations.add(result);
+        }
+        return allocations;
+    }
+
     private Map<String, Object> tryAllocate(Map<String, Object> request, SchedulingAlgorithm algorithm) {
+        return tryAllocate(request, algorithm, false);
+    }
+
+    private Map<String, Object> tryAllocate(Map<String, Object> request, SchedulingAlgorithm algorithm,
+                                            boolean skipIfAlreadyClaimed) {
         long requestId = ((Number) request.get("id")).longValue();
-        if (repository.claimRequest(requestId, algorithm.name()) == 0)
+        if (repository.claimRequest(requestId, algorithm.name()) == 0) {
+            if (skipIfAlreadyClaimed) return Map.of("allocated", false, "requestId", requestId);
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Parking request has already been processed");
+        }
         long vehicleId = ((Number) request.get("vehicleId")).longValue();
         String vehicleType = String.valueOf(request.get("vehicleType"));
         for (Map<String, Object> slot : repository.availableSlots(vehicleType)) {
             long slotId = ((Number) slot.get("id")).longValue();
             if (repository.occupyIfAvailable(slotId) == 0) continue;
             long sessionId = repository.createSession(requestId, vehicleId, slotId, hourlyRate);
+            repository.createNotificationIfAbsent("ALLOCATION:" + sessionId, "NEW_ALLOCATION",
+                    "Parking request " + requestId + " for vehicle " + request.get("registrationNumber")
+                            + " was allocated to slot " + slot.get("slotNumber") + ".", sessionId);
             repository.recordAllocation(requestId, slotId, "ALLOCATED", "Slot allocated using " + algorithm.name());
             repository.recordAudit("ALLOCATION_ATTEMPT", requestId, sessionId, slotId, "ALLOCATED",
                     "Allocated using " + algorithm.name());
@@ -196,15 +236,16 @@ public class ParkingWorkflowService {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Parking session or slot changed; no release was completed");
         Timestamp start = (Timestamp) session.get("startedAt");
         Timestamp endedAt = (Timestamp) repository.session(sessionId).get("endedAt");
-        Instant end = endedAt.toInstant();
+        Instant end = endedAt.toLocalDateTime().toInstant(ZoneOffset.UTC);
         BigDecimal sessionRate = (BigDecimal) session.get("hourlyRate");
-        ParkingBilling.Charge charge = ParkingBilling.calculate(start.toInstant(), end, sessionRate);
+        ParkingBilling.Charge charge = ParkingBilling.calculate(start.toLocalDateTime().toInstant(ZoneOffset.UTC), end, sessionRate);
         if (repository.saveSessionFee(sessionId, charge.fee()) == 0)
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Parking session fee was already recorded");
         repository.recordAudit("SESSION_RELEASED", ((Number) session.get("requestId")).longValue(),
                 sessionId, slotId, "SUCCESS",
                 "durationSeconds=" + charge.durationSeconds() + ", chargedHours=" + charge.chargedHours() +
                         ", hourlyRate=" + sessionRate + ", fee=" + charge.fee());
+        List<Map<String, Object>> allocations = autoAllocatePendingRequests();
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("sessionId", sessionId);
         result.put("slotId", slotId);
@@ -212,7 +253,38 @@ public class ParkingWorkflowService {
         result.put("chargedHours", charge.chargedHours());
         result.put("hourlyRate", sessionRate);
         result.put("fee", charge.fee());
+        result.put("automaticAllocations", allocations);
         return result;
+    }
+
+    @Transactional
+    public Map<String, Object> extend(long sessionId, Integer additionalMinutes) {
+        if (additionalMinutes == null || additionalMinutes < 1 || additionalMinutes > 10080)
+            throw badRequest("Extension must be between 1 minute and 7 days");
+        Map<String, Object> session = repository.activeSession(sessionId);
+        if (session == null) throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Active parking session not found");
+        if (repository.extendSession(sessionId, additionalMinutes) == 0)
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Parking session changed; extension was not applied");
+        long requestId = ((Number) session.get("requestId")).longValue();
+        long slotId = ((Number) session.get("slotId")).longValue();
+        repository.recordAudit("SESSION_EXTENDED", requestId, sessionId, slotId, "SUCCESS",
+                "additionalMinutes=" + additionalMinutes);
+        return session(sessionId);
+    }
+
+    public Map<String, Object> notifications(boolean unreadOnly, int offset, int limit) {
+        if (offset < 0 || offset > 1_000_000 || limit < 1 || limit > 100)
+            throw badRequest("Notification offset must be between 0 and 1000000 and limit must be between 1 and 100");
+        return Map.of("items", repository.notifications(unreadOnly, offset, limit),
+                "unreadCount", repository.unreadNotificationCount(), "offset", offset, "limit", limit);
+    }
+
+    @Transactional
+    public Map<String, Object> acknowledgeNotification(long id) {
+        Map<String, Object> notification = repository.notification(id);
+        if (notification == null) throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Notification not found");
+        repository.acknowledgeNotification(id);
+        return Map.of("id", id, "acknowledged", true);
     }
 
     public List<Map<String, Object>> activeSessions() {
@@ -227,7 +299,7 @@ public class ParkingWorkflowService {
         Map<String, Object> session = repository.session(sessionId);
         if (session == null) throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Parking session not found");
         Timestamp endedAt = (Timestamp) session.get("endedAt");
-        return withCharge(session, endedAt == null ? Instant.now() : endedAt.toInstant());
+        return withCharge(session, endedAt == null ? Instant.now() : endedAt.toLocalDateTime().toInstant(ZoneOffset.UTC));
     }
 
     public List<Map<String, Object>> history() {
@@ -267,7 +339,8 @@ public class ParkingWorkflowService {
     private Map<String, Object> withCharge(Map<String, Object> session, Instant endedAt) {
         Timestamp startedAt = (Timestamp) session.get("startedAt");
         BigDecimal sessionRate = (BigDecimal) session.get("hourlyRate");
-        ParkingBilling.Charge charge = ParkingBilling.calculate(startedAt.toInstant(), endedAt, sessionRate);
+        ParkingBilling.Charge charge = ParkingBilling.calculate(
+                startedAt.toLocalDateTime().toInstant(ZoneOffset.UTC), endedAt, sessionRate);
         Map<String, Object> result = new LinkedHashMap<>(session);
         result.put("durationSeconds", charge.durationSeconds());
         result.put("chargedHours", charge.chargedHours());

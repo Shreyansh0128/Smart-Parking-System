@@ -55,7 +55,8 @@ public class ParkingWorkflowController {
     @PostMapping("/requests")
     @ResponseStatus(HttpStatus.CREATED)
     public Map<String, Object> createRequest(@RequestBody RequestInput input) {
-        return service.createRequest(input == null ? null : input.vehicleId(), input == null ? null : input.priority());
+        return service.createRequest(input == null ? null : input.vehicleId(), input == null ? null : input.priority(),
+                input == null ? null : input.expectedDurationMinutes());
     }
 
     @GetMapping("/requests/{id}")
@@ -94,6 +95,23 @@ public class ParkingWorkflowController {
         return service.release(id);
     }
 
+    @PostMapping("/sessions/{id}/extend")
+    public Map<String, Object> extend(@PathVariable long id, @RequestBody ExtensionInput input) {
+        return service.extend(id, input == null ? null : input.additionalMinutes());
+    }
+
+    @GetMapping("/notifications")
+    public Map<String, Object> notifications(@RequestParam(defaultValue = "false") boolean unreadOnly,
+                                             @RequestParam(defaultValue = "0") int offset,
+                                             @RequestParam(defaultValue = "50") int limit) {
+        return service.notifications(unreadOnly, offset, limit);
+    }
+
+    @PostMapping("/notifications/{id}/acknowledge")
+    public Map<String, Object> acknowledgeNotification(@PathVariable long id) {
+        return service.acknowledgeNotification(id);
+    }
+
     @GetMapping("/history")
     public List<Map<String, Object>> history() {
         return service.history();
@@ -125,4 +143,6 @@ public class ParkingWorkflowController {
                     "No compatible available slot is currently available")));
         return result;
     }
+
+    public record ExtensionInput(Integer additionalMinutes) {}
 }

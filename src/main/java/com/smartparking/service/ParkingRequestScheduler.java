@@ -2,6 +2,7 @@ package com.smartparking.service;
 
 import java.time.LocalDateTime;
 import java.time.Duration;
+import java.time.ZoneOffset;
 import java.util.Comparator;
 import java.util.List;
 
@@ -9,7 +10,7 @@ public class ParkingRequestScheduler {
     public record ScheduledRequest(long id, int priority, LocalDateTime requestedAt) {}
 
     public List<ScheduledRequest> order(List<ScheduledRequest> requests, SchedulingAlgorithm algorithm) {
-        return order(requests, algorithm, LocalDateTime.now());
+        return order(requests, algorithm, LocalDateTime.now(ZoneOffset.UTC));
     }
 
     public List<ScheduledRequest> order(List<ScheduledRequest> requests, SchedulingAlgorithm algorithm,

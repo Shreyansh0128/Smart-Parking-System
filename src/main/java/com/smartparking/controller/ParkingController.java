@@ -2,10 +2,12 @@ package com.smartparking.controller;
 
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.server.ResponseStatusException;
+import com.smartparking.service.ParkingWorkflowService;
 
 import java.util.List;
 import java.util.Map;
@@ -14,38 +16,62 @@ import java.util.Set;
 @RestController
 @RequestMapping("/api/parking")
 public class ParkingController {
-    private static final Set<String> STATUSES = Set.of("AVAILABLE", "OCCUPIED", "RESERVED");
+    private static final Set<String> STATUSES = Set.of("AVAILABLE", "OCCUPIED", "RESERVED", "OUT_OF_SERVICE");
     private static final Set<String> SLOT_TYPES = Set.of("BIKE", "CAR", "EV");
     private final JdbcTemplate jdbc;
+    private final ParkingWorkflowService workflowService;
 
-    public ParkingController(JdbcTemplate jdbc) { this.jdbc = jdbc; }
+    public ParkingController(JdbcTemplate jdbc) { this(jdbc, null); }
+
+    @Autowired
+    public ParkingController(JdbcTemplate jdbc, ParkingWorkflowService workflowService) {
+        this.jdbc = jdbc;
+        this.workflowService = workflowService;
+    }
 
     @GetMapping("/stats")
     public Map<String, Integer> getParkingStats() {
         Map<String, Object> stats = jdbc.queryForMap("SELECT COUNT(*) totalSlots, " +
                 "NVL(SUM(CASE WHEN STATUS='AVAILABLE' THEN 1 ELSE 0 END), 0) availableSlots, " +
                 "NVL(SUM(CASE WHEN STATUS='OCCUPIED' THEN 1 ELSE 0 END), 0) occupiedSlots, " +
-                "NVL(SUM(CASE WHEN STATUS='RESERVED' THEN 1 ELSE 0 END), 0) reservedSlots FROM PARKING_SLOTS");
+                "NVL(SUM(CASE WHEN STATUS='RESERVED' THEN 1 ELSE 0 END), 0) reservedSlots, " +
+                "NVL(SUM(CASE WHEN STATUS='OUT_OF_SERVICE' THEN 1 ELSE 0 END), 0) outOfServiceSlots, " +
+                "(SELECT COUNT(*) FROM PARKING_SESSIONS WHERE SESSION_STATUS='ACTIVE' " +
+                "AND EXPECTED_END_AT IS NOT NULL AND EXPECTED_END_AT<SYS_EXTRACT_UTC(SYSTIMESTAMP)) overdueSessions " +
+                "FROM PARKING_SLOTS");
         return Map.of("totalSlots", ((Number) stats.get("TOTALSLOTS")).intValue(),
                 "availableSlots", ((Number) stats.get("AVAILABLESLOTS")).intValue(),
                 "occupiedSlots", ((Number) stats.get("OCCUPIEDSLOTS")).intValue(),
-                "reservedSlots", ((Number) stats.get("RESERVEDSLOTS")).intValue());
+                "reservedSlots", ((Number) stats.get("RESERVEDSLOTS")).intValue(),
+                "outOfServiceSlots", ((Number) stats.get("OUTOFSERVICESLOTS")).intValue(),
+                "overdueSessions", ((Number) stats.get("OVERDUESESSIONS")).intValue());
     }
 
     @GetMapping("/slots")
     public List<Map<String, Object>> slots(@RequestParam(required = false) String status,
-                                           @RequestParam(required = false) Integer floor) {
+                                           @RequestParam(required = false) Integer floor,
+                                           @RequestParam(required = false) String vehicleType,
+                                           @RequestParam(required = false) String search) {
         if (status != null && !STATUSES.contains(status.trim().toUpperCase()))
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Status must be AVAILABLE, OCCUPIED, or RESERVED");
-        StringBuilder sql = new StringBuilder("SELECT SLOT_ID AS \"id\", SLOT_NUMBER AS \"slotNumber\", FLOOR AS \"floor\", SLOT_TYPE AS \"slotType\", STATUS AS \"status\", VERSION_NO AS \"version\" FROM PARKING_SLOTS WHERE 1=1");
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Status must be AVAILABLE, OCCUPIED, RESERVED, or OUT_OF_SERVICE");
+        if (vehicleType != null && !SLOT_TYPES.contains(vehicleType.trim().toUpperCase()))
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Vehicle type must be BIKE, CAR, or EV");
+        StringBuilder sql = new StringBuilder("SELECT P.SLOT_ID AS \"id\",P.SLOT_NUMBER AS \"slotNumber\",P.FLOOR AS \"floor\",P.SLOT_TYPE AS \"slotType\",P.STATUS AS \"status\",P.VERSION_NO AS \"version\",V.REGISTRATION_NUMBER AS \"registrationNumber\",S.EXPECTED_END_AT AS \"expectedEndAt\",S.SESSION_ID AS \"sessionId\" FROM PARKING_SLOTS P LEFT JOIN PARKING_SESSIONS S ON S.SLOT_ID=P.SLOT_ID AND S.SESSION_STATUS='ACTIVE' LEFT JOIN VEHICLES V ON V.VEHICLE_ID=S.VEHICLE_ID WHERE 1=1");
         java.util.List<Object> args = new java.util.ArrayList<>();
         if (status != null) { sql.append(" AND STATUS=?"); args.add(status.trim().toUpperCase()); }
+        if (vehicleType != null) { sql.append(" AND P.SLOT_TYPE=?"); args.add(vehicleType.trim().toUpperCase()); }
         if (floor != null) {
             if (floor < 0) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Floor must be zero or greater");
             sql.append(" AND FLOOR=?");
             args.add(floor);
         }
-        sql.append(" ORDER BY FLOOR, SLOT_NUMBER");
+        if (search != null && !search.isBlank()) {
+            sql.append(" AND (UPPER(P.SLOT_NUMBER) LIKE ? OR UPPER(V.REGISTRATION_NUMBER) LIKE ?)");
+            String pattern = "%" + search.trim().toUpperCase() + "%";
+            args.add(pattern);
+            args.add(pattern);
+        }
+        sql.append(" ORDER BY P.FLOOR, P.SLOT_NUMBER");
         return jdbc.queryForList(sql.toString(), args.toArray());
     }
 
@@ -57,6 +83,9 @@ public class ParkingController {
     @Transactional
     public Map<String, Object> createSlot(@RequestBody SlotInput input) {
         validate(input);
+        if ("OCCUPIED".equals(normalizedStatus(input.status() == null ? "AVAILABLE" : input.status())))
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "Create a parking session through allocation before marking a slot occupied");
         try {
             jdbc.update("INSERT INTO PARKING_SLOTS (SLOT_ID,SLOT_NUMBER,FLOOR,SLOT_TYPE,STATUS) VALUES (PARKING_SLOT_SEQ.NEXTVAL,?,?,?,?)",
                     input.slotNumber().trim().toUpperCase(), input.floor(), input.slotType().trim().toUpperCase(),
@@ -65,9 +94,9 @@ public class ParkingController {
         Map<String, Object> created = jdbc.queryForMap("SELECT SLOT_ID AS \"id\",SLOT_NUMBER AS \"slotNumber\",FLOOR AS \"floor\",SLOT_TYPE AS \"slotType\",STATUS AS \"status\",VERSION_NO AS \"version\" FROM PARKING_SLOTS WHERE SLOT_NUMBER=?", input.slotNumber().trim().toUpperCase());
         jdbc.update("INSERT INTO PARKING_AUDIT_EVENTS " +
                         "(EVENT_ID,EVENT_TYPE,EVENT_AT,SLOT_ID,OUTCOME,DETAILS) " +
-                        "VALUES (PARKING_AUDIT_SEQ.NEXTVAL,'SLOT_CREATED',SYSTIMESTAMP,?,'SUCCESS',?)",
+                        "VALUES (PARKING_AUDIT_SEQ.NEXTVAL,'SLOT_CREATED',SYS_EXTRACT_UTC(SYSTIMESTAMP),?,'SUCCESS',?)",
                 created.get("id"), describeSlot(created));
-        return created;
+        return withAutomaticAllocations(created);
     }
 
     @PutMapping("/slots/{id}")
@@ -87,9 +116,9 @@ public class ParkingController {
         Map<String, Object> updated = findSlot(id);
         jdbc.update("INSERT INTO PARKING_AUDIT_EVENTS " +
                         "(EVENT_ID,EVENT_TYPE,EVENT_AT,SLOT_ID,OUTCOME,DETAILS) " +
-                        "VALUES (PARKING_AUDIT_SEQ.NEXTVAL,'SLOT_UPDATED',SYSTIMESTAMP,?,'SUCCESS',?)",
+                        "VALUES (PARKING_AUDIT_SEQ.NEXTVAL,'SLOT_UPDATED',SYS_EXTRACT_UTC(SYSTIMESTAMP),?,'SUCCESS',?)",
                 id, describeSlot(before) + " -> " + describeSlot(updated));
-        return updated;
+        return withAutomaticAllocations(updated);
     }
 
     @PatchMapping("/slots/{id}/status")
@@ -106,9 +135,9 @@ public class ParkingController {
         Map<String, Object> updated = findSlot(id);
         jdbc.update("INSERT INTO PARKING_AUDIT_EVENTS " +
                         "(EVENT_ID,EVENT_TYPE,EVENT_AT,SLOT_ID,OUTCOME,DETAILS) " +
-                        "VALUES (PARKING_AUDIT_SEQ.NEXTVAL,'SLOT_STATUS_CHANGED',SYSTIMESTAMP,?,'SUCCESS',?)",
+                        "VALUES (PARKING_AUDIT_SEQ.NEXTVAL,'SLOT_STATUS_CHANGED',SYS_EXTRACT_UTC(SYSTIMESTAMP),?,'SUCCESS',?)",
                 id, before.get("status") + " -> " + updated.get("status"));
-        return updated;
+        return withAutomaticAllocations(updated);
     }
 
     @DeleteMapping("/slots/{id}")
@@ -122,7 +151,7 @@ public class ParkingController {
             throw staleSlot();
         jdbc.update("INSERT INTO PARKING_AUDIT_EVENTS " +
                         "(EVENT_ID,EVENT_TYPE,EVENT_AT,SLOT_ID,OUTCOME,DETAILS) " +
-                        "VALUES (PARKING_AUDIT_SEQ.NEXTVAL,'SLOT_DELETED',SYSTIMESTAMP,?,'SUCCESS',?)",
+                        "VALUES (PARKING_AUDIT_SEQ.NEXTVAL,'SLOT_DELETED',SYS_EXTRACT_UTC(SYSTIMESTAMP),?,'SUCCESS',?)",
                 id, describeSlot(before));
     }
 
@@ -140,9 +169,11 @@ public class ParkingController {
     }
 
     private void ensureNoActiveSessionForNonOccupiedStatus(long id, String status) {
-        if ("OCCUPIED".equals(status)) return;
         Integer active = jdbc.queryForObject("SELECT COUNT(*) FROM PARKING_SESSIONS WHERE SLOT_ID=? AND SESSION_STATUS='ACTIVE'", Integer.class, id);
-        if (active != null && active > 0)
+        boolean hasActiveSession = active != null && active > 0;
+        if ("OCCUPIED".equals(status) && !hasActiveSession)
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "A slot can only be marked occupied when it has an active session");
+        if (!"OCCUPIED".equals(status) && hasActiveSession)
             throw new ResponseStatusException(HttpStatus.CONFLICT, "An active session requires this slot to remain occupied");
     }
 
@@ -160,9 +191,20 @@ public class ParkingController {
                 ", type=" + slot.get("slotType") + ", status=" + slot.get("status") +
                 ", version=" + slot.get("version");
     }
+    private Map<String, Object> withAutomaticAllocations(Map<String, Object> slot) {
+        List<Map<String, Object>> allocations = List.of();
+        Map<String, Object> finalSlot = slot;
+        if (workflowService != null && "AVAILABLE".equals(slot.get("status"))) {
+            allocations = workflowService.autoAllocatePendingRequests();
+            finalSlot = findSlot(((Number) slot.get("id")).longValue());
+        }
+        Map<String, Object> result = new java.util.LinkedHashMap<>(finalSlot);
+        result.put("automaticAllocations", allocations);
+        return result;
+    }
     private String normalizedStatus(String status) {
         if (status == null || !STATUSES.contains(status.trim().toUpperCase()))
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Status must be AVAILABLE, OCCUPIED, or RESERVED");
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Status must be AVAILABLE, OCCUPIED, RESERVED, or OUT_OF_SERVICE");
         return status.trim().toUpperCase();
     }
     private void validate(SlotInput input) {

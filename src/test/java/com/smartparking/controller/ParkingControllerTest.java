@@ -22,9 +22,11 @@ class ParkingControllerTest {
     @Test
     void statsReturnZeroCountsWhenTheInventoryIsEmpty() {
         when(jdbc.queryForMap(contains("COUNT(*)"))).thenReturn(Map.of(
-                "TOTALSLOTS", 0L, "AVAILABLESLOTS", 0L, "OCCUPIEDSLOTS", 0L, "RESERVEDSLOTS", 0L));
+                "TOTALSLOTS", 0L, "AVAILABLESLOTS", 0L, "OCCUPIEDSLOTS", 0L, "RESERVEDSLOTS", 0L,
+                "OUTOFSERVICESLOTS", 0L, "OVERDUESESSIONS", 0L));
 
-        assertEquals(Map.of("totalSlots", 0, "availableSlots", 0, "occupiedSlots", 0, "reservedSlots", 0),
+        assertEquals(Map.of("totalSlots", 0, "availableSlots", 0, "occupiedSlots", 0, "reservedSlots", 0,
+                        "outOfServiceSlots", 0, "overdueSessions", 0),
                 controller.getParkingStats());
     }
 
@@ -39,6 +41,20 @@ class ParkingControllerTest {
                 () -> controller.updateSlot(7, new ParkingController.SlotInput("C-07", 0, "CAR", "AVAILABLE", 2L)));
         verify(jdbc, never()).update(contains("UPDATE PARKING_SLOTS"), eq("C-07"), eq(0),
                 eq("CAR"), eq("AVAILABLE"), eq(7L), eq(2L));
+    }
+
+    @Test
+    void slotCannotBeMarkedOccupiedWithoutAnActiveSession() {
+        when(jdbc.queryForMap(contains("FOR UPDATE"), eq(7L))).thenReturn(Map.of(
+                "id", 7L, "slotNumber", "C-07", "floor", 0, "slotType", "CAR", "status", "AVAILABLE",
+                "version", 2L));
+        when(jdbc.queryForObject(contains("SESSION_STATUS='ACTIVE'"), eq(Integer.class), eq(7L))).thenReturn(0);
+
+        ResponseStatusException exception = assertThrows(ResponseStatusException.class,
+                () -> controller.updateStatus(7, new ParkingController.StatusInput("OCCUPIED", 2L)));
+
+        assertEquals(409, exception.getStatusCode().value());
+        verify(jdbc, never()).update(contains("UPDATE PARKING_SLOTS"), org.mockito.ArgumentMatchers.<Object[]>any());
     }
 
     @Test

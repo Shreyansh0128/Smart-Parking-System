@@ -57,13 +57,13 @@ class ParkingWorkflowServiceTest {
     @Test
     void requestCreationRecordsAnAuditEventWithTheCreatedRequest() {
         when(repository.vehicle(8L)).thenReturn(Map.of("id", 8L));
-        when(repository.createRequest(8L, 35)).thenReturn(14L);
+        when(repository.createRequest(8L, 35, null)).thenReturn(14L);
         when(repository.request(14L)).thenReturn(Map.of("id", 14L, "status", "PENDING"));
 
         service.createRequest(8L, 35);
 
         verify(repository).recordAudit("REQUEST_CREATED", 14L, null, null, "SUCCESS",
-                "vehicleId=8, priority=35");
+                "vehicleId=8, priority=35, expectedDurationMinutes=null");
     }
 
     @Test
@@ -107,5 +107,32 @@ class ParkingWorkflowServiceTest {
         verify(repository).saveSessionFee(22L, new BigDecimal("5.00"));
         verify(repository).recordAudit("SESSION_RELEASED", 14L, 22L, 7L, "SUCCESS",
                 "durationSeconds=3601, chargedHours=2, hourlyRate=2.50, fee=5.00");
+    }
+
+    @Test
+    void extensionUpdatesExpectedEndAndRecordsAnAuditEvent() {
+        Timestamp startedAt = Timestamp.valueOf("2026-10-15 09:00:00");
+        Timestamp expectedEnd = Timestamp.valueOf("2026-10-15 11:30:00");
+        when(repository.activeSession(22L)).thenReturn(Map.of(
+                "id", 22L, "requestId", 14L, "slotId", 7L));
+        when(repository.extendSession(22L, 30)).thenReturn(1);
+        when(repository.session(22L)).thenReturn(Map.of(
+                "id", 22L, "startedAt", startedAt, "expectedEndAt", expectedEnd,
+                "hourlyRate", new BigDecimal("2.50"), "registrationNumber", "UK1111111"));
+
+        Map<String, Object> outcome = service.extend(22L, 30);
+
+        assertEquals(expectedEnd, outcome.get("expectedEndAt"));
+        verify(repository).recordAudit("SESSION_EXTENDED", 14L, 22L, 7L, "SUCCESS",
+                "additionalMinutes=30");
+    }
+
+    @Test
+    void extensionRejectsInvalidDurationsBeforeAccessingTheRepository() {
+        ResponseStatusException exception = assertThrows(ResponseStatusException.class,
+                () -> service.extend(22L, 0));
+
+        assertEquals(400, exception.getStatusCode().value());
+        verifyNoInteractions(repository);
     }
 }

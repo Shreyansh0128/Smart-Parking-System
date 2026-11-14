@@ -16,6 +16,9 @@ header {
     padding: 28px 40px;
 }
 
+.header-content { max-width: 1100px; margin: 0 auto; display: flex; justify-content: space-between; align-items: center; gap: 20px; }
+.notification-count { display: inline-grid; place-items: center; min-width: 1.5em; height: 1.5em; margin-left: 5px; border-radius: 999px; background: #dc2626; color: white; font-weight: 700; }
+
 header h1 {
     margin: 0 0 8px;
     font-size: 28px;
@@ -38,7 +41,7 @@ h2 {
 
 .parking-stats {
     display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
     gap: 20px;
 }
 
@@ -57,14 +60,20 @@ input, select { border: 1px solid #cbd5e1; border-radius: 8px; padding: 9px; bac
 .notice { min-height: 20px; margin: 10px 0; }
 .notice.success { color: #166534; }
 .notice.error { color: #b91c1c; }
-.slot-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 14px; }
+.floor-map { display: grid; gap: 20px; }
+.floor-section { padding: 18px; border: 1px solid #cbd5e1; border-radius: 14px; background: #e8edf5; }
+.floor-section h3 { margin: 0 0 14px; }
+.slot-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 14px; }
 .slot-card { padding: 18px; border: 1px solid #e2e8f0; border-radius: 12px; background: white; box-shadow: 0 4px 14px rgba(15,23,42,.05); }
-.slot-card h3 { margin: 0 0 8px; font-size: 21px; }
+.slot-card h4 { margin: 0 0 8px; font-size: 18px; }
 .slot-card p { color: #64748b; margin: 0 0 14px; }
 .status { display: inline-block; border-radius: 999px; padding: 5px 10px; font-size: 12px; font-weight: bold; }
 .status.available { color: #166534; background: #dcfce7; }
 .status.occupied { color: #991b1b; background: #fee2e2; }
 .status.reserved { color: #92400e; background: #fef3c7; }
+.status.out_of_service { color: #334155; background: #e2e8f0; }
+.overdue-time { color: #991b1b !important; font-weight: 700; }
+.expected-time { color: #854d0e !important; font-weight: 700; }
 .slot-actions { display: flex; gap: 7px; margin-top: 16px; flex-wrap: wrap; }
 .slot-actions select { min-width: 115px; }
 .empty { color: #64748b; grid-column: 1 / -1; }
@@ -77,12 +86,17 @@ input, select { border: 1px solid #cbd5e1; border-radius: 8px; padding: 9px; bac
 .record-card { display: grid; align-content: start; gap: 10px; padding: 16px; background: white; border: 1px solid #e2e8f0; border-radius: 10px; overflow-wrap: anywhere; }
 .record-card p { margin: 0; color: #64748b; }
 .record-card button { justify-self: start; }
+.record-card.unread { border-left: 4px solid #2563eb; }
+.record-card.acknowledged { opacity: .8; }
+.notification-panel[hidden] { display: none; }
 .muted { color: #64748b; }
 dialog { width: min(440px, calc(100% - 28px)); border: 0; border-radius: 14px; padding: 24px; box-shadow: 0 20px 60px #0f172a44; }
 dialog::backdrop { background: #0f172a88; }
 #slotForm { display: grid; gap: 14px; }
 #slotForm h2 { margin: 0 0 4px; }
 .dialog-actions { display: flex; justify-content: end; gap: 10px; margin-top: 5px; }
+
+:focus-visible { outline: 3px solid #2563eb; outline-offset: 2px; }
 
 .stat-card {
     background: white;
@@ -103,12 +117,10 @@ dialog::backdrop { background: #0f172a88; }
 }
 
 @media (max-width: 650px) {
-    .parking-stats {
-        grid-template-columns: 1fr;
-    }
-
+    .header-content { align-items: start; flex-direction: column; }
     .section-heading { align-items: start; }
     .slot-actions { align-items: stretch; }
+    .slot-actions > * { flex: 1 1 auto; }
 
     header {
         padding: 24px;

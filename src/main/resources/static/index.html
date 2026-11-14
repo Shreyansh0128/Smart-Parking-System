@@ -9,8 +9,15 @@
 </head>
 <body>
 <header>
-    <h1>Smart Parking System</h1>
-    <p>Parking Allocation and Resource Management</p>
+    <div class="header-content">
+        <div><h1>Smart Parking System</h1><p>Owner dashboard · parking allocation and resource management</p></div>
+        <div class="header-actions">
+            <button id="notificationToggle" type="button" aria-expanded="false" aria-controls="notificationPanel">
+                Notifications <span id="unreadCount" class="notification-count" aria-label="unread notifications">0</span>
+            </button>
+            <button id="logoutButton" type="button">Sign out</button>
+        </div>
+    </div>
 </header>
 
 <main>
@@ -19,22 +26,29 @@
 
         <div class="parking-stats">
             <div class="stat-card">
-                <p>Total Slots</p>
-                <span id="totalSlots">50</span>
+                <p>Total slots</p>
+                <span id="totalSlots">—</span>
             </div>
-
             <div class="stat-card">
                 <p>Available Slots</p>
-                <span id="availableSlots">35</span>
+                <span id="availableSlots">—</span>
             </div>
 
             <div class="stat-card">
                 <p>Occupied Slots</p>
-                <span id="occupiedSlots">15</span>
+                <span id="occupiedSlots">—</span>
             </div>
             <div class="stat-card">
                 <p>Reserved Slots</p>
-                <span id="reservedSlots">0</span>
+                <span id="reservedSlots">—</span>
+            </div>
+            <div class="stat-card">
+                <p>Overdue sessions</p>
+                <span id="overdueSessions">—</span>
+            </div>
+            <div class="stat-card">
+                <p>Out of service</p>
+                <span id="outOfServiceSlots">—</span>
             </div>
         </div>
         <p class="legend"><span class="status available">AVAILABLE</span><span class="status occupied">OCCUPIED</span><span class="status reserved">RESERVED</span></p>
@@ -47,11 +61,13 @@
         </div>
         <p id="notice" class="notice" role="status" aria-live="polite"></p>
         <div class="filters">
-            <label>Status <select id="statusFilter"><option value="">All statuses</option><option>AVAILABLE</option><option>OCCUPIED</option><option>RESERVED</option></select></label>
+            <label>Search slot or vehicle <input id="searchFilter" type="search" autocomplete="off"></label>
+            <label>Status <select id="statusFilter"><option value="">All statuses</option><option>AVAILABLE</option><option>RESERVED</option><option>OCCUPIED</option><option>OUT_OF_SERVICE</option></select></label>
             <label>Floor <input id="floorFilter" type="number" min="0" placeholder="All floors"></label>
+            <label>Vehicle type <select id="vehicleTypeFilter"><option value="">All types</option><option>BIKE</option><option>CAR</option><option>EV</option></select></label>
             <button id="clearFilters">Clear filters</button>
         </div>
-        <div id="slotGrid" class="slot-grid" aria-live="polite"></div>
+        <div id="slotGrid" class="floor-map" aria-live="polite" aria-busy="true"></div>
     </section>
 
     <section class="management" aria-labelledby="registrationHeading">
@@ -76,19 +92,19 @@
 
     <section class="management" aria-labelledby="requestsHeading">
         <div class="section-heading">
-            <div><h2 id="requestsHeading">Parking requests and allocation</h2><p>Higher priority values run first; aging adds one point per five waiting minutes up to 100. Ties use arrival time, then request ID.</p></div>
+            <div><h2 id="requestsHeading">Parking requests and automatic allocation</h2><p>Requests are assigned automatically using priority with aging. If no matching space is free, a request waits and is assigned when a space becomes available.</p></div>
         </div>
         <div class="workflow-forms">
             <form id="requestForm" class="workflow-form">
                 <h3>Request parking</h3>
                 <label>Vehicle <select id="requestVehicle" required></select></label>
+                <label>Expected duration in minutes (leave blank if unknown) <input id="requestDuration" type="number" min="1" max="10080" placeholder="Unknown"></label>
                 <label>Priority (0–100) <input id="requestPriority" type="number" min="0" max="100" value="0"></label>
                 <button class="primary" type="submit">Submit request</button>
             </form>
             <div class="workflow-form">
-                <h3>Scheduling algorithms</h3>
-                <label>Algorithm <select id="algorithmSelect"><option value="FCFS">FCFS</option><option value="PRIORITY">Priority (fixed)</option><option value="PRIORITY_AGING">Priority with aging</option></select></label>
-                <button id="allocateNextButton" class="primary" type="button">Allocate next request</button>
+                <h3>Scheduling methods</h3>
+                <p>The automatic allocator uses priority aging: waiting requests gradually move up the line.</p>
                 <button id="runSimulation" type="button">Compare pending order</button>
                 <p id="simulationResult" class="muted" aria-live="polite">Scheduling order will appear here.</p>
             </div>
@@ -99,6 +115,12 @@
     <section class="management" aria-labelledby="sessionsHeading">
         <h2 id="sessionsHeading">Active parking sessions</h2>
         <div id="activeSessionList" class="record-list" aria-live="polite"></div>
+    </section>
+
+    <section id="notificationPanel" class="management notification-panel" aria-labelledby="notificationsHeading" hidden>
+        <h2 id="notificationsHeading">Notification center</h2>
+        <p>Alerts remain here until acknowledged. An elapsed estimate never frees its occupied slot.</p>
+        <div id="notificationList" class="record-list" aria-live="polite"></div>
     </section>
 
     <section class="management" aria-labelledby="historyHeading">
@@ -125,7 +147,7 @@
             <label>Slot number <input id="slotNumber" maxlength="10" required placeholder="C-01"></label>
             <label>Floor <input id="slotFloor" type="number" min="0" value="0" required></label>
             <label>Slot type <select id="slotType"><option>CAR</option><option>BIKE</option><option>EV</option></select></label>
-            <label>Status <select id="slotStatus"><option>AVAILABLE</option><option>OCCUPIED</option><option>RESERVED</option></select></label>
+            <label>Status <select id="slotStatus"><option>AVAILABLE</option><option>OCCUPIED</option><option>RESERVED</option><option>OUT_OF_SERVICE</option></select></label>
             <div class="dialog-actions"><button type="button" id="cancelDialog">Cancel</button><button class="primary" type="submit">Save slot</button></div>
         </form>
     </dialog>
