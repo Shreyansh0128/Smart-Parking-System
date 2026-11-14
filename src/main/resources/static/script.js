@@ -1,11 +1,8 @@
 const $ = (id) => document.getElementById(id);
 const dialog = $("slotDialog");
-let csrfToken = "";
 
 async function api(url, options = {}) {
     const headers = { "Content-Type": "application/json", ...options.headers };
-    if (options.method && !["GET", "HEAD", "OPTIONS"].includes(options.method.toUpperCase()) && csrfToken)
-        headers["X-XSRF-TOKEN"] = csrfToken;
     const response = await fetch(url, { ...options, headers });
     if (!response.ok) {
         let message = `Request failed (${response.status})`;
@@ -399,14 +396,6 @@ $("notificationToggle").addEventListener("click", () => {
 
 document.addEventListener("DOMContentLoaded", async () => {
     showNotice("Loading parking data…");
-    try {
-        const csrf = await api("/api/auth/csrf");
-        csrfToken = csrf.token;
-    } catch (error) {
-        showNotice(`Owner sign-in is required: ${error.message}`, "error");
-        $("slotGrid").textContent = "Sign in with the owner account to load parking data.";
-        return;
-    }
     const results = await Promise.allSettled([loadDashboard(), loadWorkflow()]);
     const failure = results.find((result) => result.status === "rejected");
     if (failure) {
@@ -417,13 +406,6 @@ document.addEventListener("DOMContentLoaded", async () => {
             .forEach((id) => { $(id).textContent = "Could not load data."; });
     }
     else showNotice("Parking data loaded.");
-});
-
-$("logoutButton").addEventListener("click", async () => {
-    try {
-        await api("/api/auth/logout", { method: "POST" });
-        window.location.assign("/");
-    } catch (error) { showNotice(`Could not sign out: ${error.message}`, "error"); }
 });
 
 let refreshingDashboard = false;

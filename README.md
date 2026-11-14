@@ -2,7 +2,7 @@
 
 A Java 25, Spring Boot, Spring JDBC, Oracle, and vanilla JavaScript academic project. It demonstrates parking allocation as a database-backed workflow, deterministic request scheduling, safe concurrent slot claims, versioned inventory edits, audit events, session billing, and operational reports.
 
-This is a local learning prototype, not a production service. It has no authentication or authorization; do not expose it to an untrusted network.
+This is a local learning prototype, not a production service. It has no authentication or authorization and binds to `127.0.0.1` by default. Do not expose it to a network without first adding appropriate access protection.
 
 ## Architecture and current scope
 
@@ -34,9 +34,7 @@ spring.datasource.password=your-local-password
 
 Never commit the local properties file or put real credentials in documentation. The connection URL and username are defined in `src/main/resources/application.properties`; the hourly rate for new sessions is configured with `parking.billing.hourly-rate` (default `2.00`). New timestamps are stored as UTC Oracle `TIMESTAMP` values, and the connection session and JSON serialization use UTC. Browsers render those timestamps in the owner's local time zone.
 
-Notification timing is configurable with `parking.notifications.upcoming-minutes` (default 15), `parking.notifications.unknown-reminder-minutes` (default 60), and `parking.notifications.poll-interval-ms` (default 60000).
-
-The app requires one owner credential at startup: set `PARKING_OWNER_USERNAME` and `PARKING_OWNER_PASSWORD_HASH` (a BCrypt hash generated using Spring Security's `BCryptPasswordEncoder`). Only the hash is configured; there is no public registration endpoint or driver account. Spring Security provides the sign-in form, session handling, CSRF protection, and sign-out.
+Notification timing is configurable with `parking.notifications.upcoming-minutes` (default 15), `parking.notifications.unknown-reminder-minutes` (default 60), and `parking.notifications.poll-interval-ms` (default 60000). No application username, password, or password hash is required. Driver and vehicle details are parking records used by the existing workflows, not application accounts.
 
 ## Oracle setup and safe migration
 
@@ -64,7 +62,7 @@ mvn package
 mvn spring-boot:run
 ```
 
-Open `http://localhost:8080/`. Spring serves the dashboard from `src/main/resources/static/`. `/api/health` does not require Oracle; database-backed endpoints require the reviewed schema and the configured credentials. `/api/database/test` checks the Oracle connection.
+Open `http://127.0.0.1:8080/`. Spring serves the dashboard from `src/main/resources/static/`, and `/api/health` does not require Oracle. Database-backed endpoints require the reviewed schema and configured database credentials; `/api/database/test` checks the Oracle connection. The server listens only on loopback by default. Do not change the bind address or otherwise expose it to a network unless appropriate access protection is added.
 
 ## User workflow
 
@@ -240,7 +238,7 @@ No Oracle setup/migration, live endpoint workflow, Oracle row-locking race, or a
 ## Troubleshooting
 
 - Connection refused: confirm Oracle is running at the configured JDBC URL and the service name is correct.
-- Authentication failure: check local `application-local.properties` or `PARKING_DB_PASSWORD`; do not commit credentials.
+- Database authentication failure: check local `application-local.properties` or `PARKING_DB_PASSWORD`; do not commit credentials.
 - Missing table/column/sequence: review schema state and apply only the correct one-time setup/migration.
 - `ORA-00001` on allocation: the unique active-slot constraint prevented conflicting claims; refresh request/slot state.
 - HTTP 409 on slot edit: reload slots and resubmit using the latest version.
