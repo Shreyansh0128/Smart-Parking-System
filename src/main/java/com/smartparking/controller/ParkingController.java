@@ -31,14 +31,17 @@ public class ParkingController {
 
     @GetMapping("/stats")
     public Map<String, Integer> getParkingStats() {
-        Map<String, Object> stats = jdbc.queryForMap("SELECT COUNT(*) totalSlots, " +
+        Map<String, Object> stats = jdbc.queryForMap("SELECT S.TOTALSLOTS AS \"TOTALSLOTS\", " +
+                "S.AVAILABLESLOTS AS \"AVAILABLESLOTS\", S.OCCUPIEDSLOTS AS \"OCCUPIEDSLOTS\", " +
+                "S.RESERVEDSLOTS AS \"RESERVEDSLOTS\", S.OUTOFSERVICESLOTS AS \"OUTOFSERVICESLOTS\", " +
+                "O.OVERDUESESSIONS AS \"OVERDUESESSIONS\" FROM (SELECT COUNT(*) totalSlots, " +
                 "NVL(SUM(CASE WHEN STATUS='AVAILABLE' THEN 1 ELSE 0 END), 0) availableSlots, " +
                 "NVL(SUM(CASE WHEN STATUS='OCCUPIED' THEN 1 ELSE 0 END), 0) occupiedSlots, " +
                 "NVL(SUM(CASE WHEN STATUS='RESERVED' THEN 1 ELSE 0 END), 0) reservedSlots, " +
-                "NVL(SUM(CASE WHEN STATUS='OUT_OF_SERVICE' THEN 1 ELSE 0 END), 0) outOfServiceSlots, " +
-                "(SELECT COUNT(*) FROM PARKING_SESSIONS WHERE SESSION_STATUS='ACTIVE' " +
-                "AND EXPECTED_END_AT IS NOT NULL AND EXPECTED_END_AT<SYS_EXTRACT_UTC(SYSTIMESTAMP)) overdueSessions " +
-                "FROM PARKING_SLOTS");
+                "NVL(SUM(CASE WHEN STATUS='OUT_OF_SERVICE' THEN 1 ELSE 0 END), 0) outOfServiceSlots " +
+                "FROM PARKING_SLOTS) S CROSS JOIN (SELECT COUNT(*) overdueSessions " +
+                "FROM PARKING_SESSIONS WHERE SESSION_STATUS='ACTIVE' AND EXPECTED_END_AT IS NOT NULL " +
+                "AND EXPECTED_END_AT<SYS_EXTRACT_UTC(SYSTIMESTAMP)) O");
         return Map.of("totalSlots", ((Number) stats.get("TOTALSLOTS")).intValue(),
                 "availableSlots", ((Number) stats.get("AVAILABLESLOTS")).intValue(),
                 "occupiedSlots", ((Number) stats.get("OCCUPIEDSLOTS")).intValue(),
